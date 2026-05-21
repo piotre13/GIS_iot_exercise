@@ -1,0 +1,5 @@
+/.conda
+/.vscode
+/api.ipynb
+/publisher.ipynb
+/subscriber.ipynb

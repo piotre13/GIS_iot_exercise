@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeoJSON Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 12px 20px;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 13px;
+      font-weight: normal;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #888;
+    }
+
+    header span {
+      font-size: 11px;
+      color: #444;
+    }
+
+    #status {
+      margin-left: auto;
+      font-size: 11px;
+      color: #555;
+      letter-spacing: 0.05em;
+    }
+
+    #status.ok { color: #4caf7d; }
+    #status.err { color: #e05252; }
+
+    .workspace {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .panel {
+      width: 340px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #1e1e1e;
+    }
+
+    .panel-label {
+      padding: 10px 14px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #444;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    textarea {
+      flex: 1;
+      background: #0a0a0a;
+      color: #a8c4a2;
+      border: none;
+      outline: none;
+      resize: none;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 14px;
+      tab-size: 2;
+    }
+
+    textarea::placeholder { color: #2e2e2e; }
+
+    .panel-footer {
+      padding: 10px 14px;
+      border-top: 1px solid #1e1e1e;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    button {
+      background: #1a1a1a;
+      color: #ccc;
+      border: 1px solid #2e2e2e;
+      padding: 6px 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    button:hover { background: #252525; border-color: #444; }
+    button.primary { background: #1c3a2a; border-color: #2e5e42; color: #6ec995; }
+    button.primary:hover { background: #213f2d; border-color: #3d7a56; }
+
+    label.file-btn {
+      background: #1a1a1a;
+      color: #888;
+      border: 1px solid #2e2e2e;
+      padding: 6px 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: background 0.15s;
+    }
+    label.file-btn:hover { background: #252525; }
+    input[type="file"] { display: none; }
+
+    #map {
+      flex: 1;
+      background: #141414;
+    }
+
+    .leaflet-container { background: #141414 !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>GeoJSON Viewer</h1>
+  <span>/</span>
+  <span>paste or load a .geojson file</span>
+  <div id="status">ready</div>
+</header>
+
+<div class="workspace">
+  <div class="panel">
+    <div class="panel-label">GeoJSON input</div>
+    <textarea id="geojson-input" placeholder='{
+  "type": "FeatureCollection",
+  "features": [...]
+}'></textarea>
+    <div class="panel-footer">
+      <button class="primary" onclick="render()">Render ↵</button>
+      <label class="file-btn">
+        Load file
+        <input type="file" accept=".geojson,.json" onchange="loadFile(event)">
+      </label>
+      <button onclick="clear_()">Clear</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 19
+  }).addTo(map);
+
+  let geojsonLayer = null;
+
+  function setStatus(msg, type) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = type || '';
+  }
+
+  function render() {
+    const raw = document.getElementById('geojson-input').value.trim();
+    if (!raw) { setStatus('nothing to render', 'err'); return; }
+
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      setStatus('invalid JSON — ' + e.message, 'err');
+      return;
+    }
+
+    if (geojsonLayer) { map.removeLayer(geojsonLayer); }
+
+    try {
+      geojsonLayer = L.geoJSON(data, {
+        style: { color: '#6ec995', weight: 2, opacity: 0.9, fillOpacity: 0.25 },
+        pointToLayer: (f, latlng) =>
+          L.circleMarker(latlng, { radius: 6, fillColor: '#6ec995', color: '#3d7a56', weight: 1.5, fillOpacity: 0.85 }),
+        onEachFeature: (feature, layer) => {
+          if (feature.properties && Object.keys(feature.properties).length) {
+            const props = Object.entries(feature.properties)
+              .map(([k, v]) => `<b>${k}</b>: ${v}`)
+              .join('<br>');
+            layer.bindPopup(`<div style="font-family:monospace;font-size:12px">${props}</div>`);
+          }
+        }
+      }).addTo(map);
+
+      const bounds = geojsonLayer.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
+
+      const count = data.features ? data.features.length : 1;
+      setStatus(`${count} feature${count !== 1 ? 's' : ''} rendered`, 'ok');
+    } catch (e) {
+      setStatus('render error — ' + e.message, 'err');
+    }
+  }
+
+  function loadFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('geojson-input').value = e.target.result;
+      setStatus('file loaded — ' + file.name);
+      render();
+    };
+    reader.readAsText(file);
+  }
+
+  function clear_() {
+    document.getElementById('geojson-input').value = '';
+    if (geojsonLayer) { map.removeLayer(geojsonLayer); geojsonLayer = null; }
+    setStatus('ready');
+  }
+
+  document.getElementById('geojson-input').addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') render();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeoJSON Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Georgia', serif;
+      background: #f5f2ee;
+      color: #2a2a2a;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 11px 20px;
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 13px;
+      font-weight: normal;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #555;
+      font-family: 'Courier New', monospace;
+    }
+
+    #status {
+      margin-left: auto;
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      color: #999;
+    }
+    #status.ok  { color: #2e7d4f; }
+    #status.err { color: #c0392b; }
+    #status.warn { color: #b07d2a; }
+
+    .workspace { display: flex; flex: 1; overflow: hidden; }
+
+    .panel {
+      width: 340px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #ddd;
+      background: #fff;
+    }
+
+    .panel-label {
+      padding: 9px 14px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #999;
+      border-bottom: 1px solid #eee;
+      font-family: 'Courier New', monospace;
+    }
+
+    textarea {
+      flex: 1;
+      background: #fafafa;
+      color: #2a6e3f;
+      border: none;
+      outline: none;
+      resize: none;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      padding: 14px;
+      tab-size: 2;
+    }
+    textarea::placeholder { color: #ccc; }
+
+    #crs-banner {
+      display: none;
+      padding: 8px 14px;
+      background: #fff8e1;
+      border-top: 1px solid #f0d080;
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      color: #7a5c00;
+      line-height: 1.5;
+    }
+
+    .panel-footer {
+      padding: 10px 14px;
+      border-top: 1px solid #eee;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #fff;
+    }
+
+    button {
+      background: #fff;
+      color: #444;
+      border: 1px solid #ccc;
+      padding: 6px 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: background 0.12s;
+    }
+    button:hover { background: #f5f5f5; border-color: #aaa; }
+    button.primary { background: #e8f5ee; border-color: #7bbf96; color: #1e5c35; }
+    button.primary:hover { background: #d6eddf; }
+
+    label.file-btn {
+      background: #fff;
+      color: #777;
+      border: 1px solid #ccc;
+      padding: 6px 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: background 0.12s;
+    }
+    label.file-btn:hover { background: #f5f5f5; }
+    input[type="file"] { display: none; }
+
+    #map { flex: 1; }
+    .leaflet-container { background: #e8e4de !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>GeoJSON Viewer</h1>
+  <div id="status">ready</div>
+</header>
+
+<div class="workspace">
+  <div class="panel">
+    <div class="panel-label">GeoJSON input</div>
+    <textarea id="geojson-input" placeholder='{
+  "type": "FeatureCollection",
+  "features": [...]
+}'></textarea>
+    <div id="crs-banner"></div>
+    <div class="panel-footer">
+      <button class="primary" onclick="render()">Render ↵</button>
+      <label class="file-btn">
+        Load file
+        <input type="file" accept=".geojson,.json" onchange="loadFile(event)">
+      </label>
+      <button onclick="clear_()">Clear</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+
+  const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 19
+  }).addTo(map);
+
+  let geojsonLayer = null;
+  let localMode = false;
+
+  function setStatus(msg, type) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = type || '';
+  }
+
+  function detectCRS(data) {
+    // GeoJSON spec says CRS is always WGS84 (EPSG:4326), but some tools
+    // embed a "crs" member with a different projection.
+    if (!data.crs) return { type: 'wgs84' };
+
+    const crs = data.crs;
+    // Named CRS
+    if (crs.type === 'name' && crs.properties && crs.properties.name) {
+      const name = crs.properties.name.toUpperCase();
+      if (name.includes('4326') || name.includes('CRS84') || name.includes('WGS84')) {
+        return { type: 'wgs84' };
+      }
+      return { type: 'other', name: crs.properties.name };
+    }
+    // Linked CRS
+    if (crs.type === 'link') {
+      return { type: 'other', name: crs.properties && crs.properties.href || 'linked CRS' };
+    }
+    return { type: 'unknown' };
+  }
+
+  function coordinatesLookLocal(data) {
+    // Heuristic: if all coordinates are outside [-180,-90,180,90] they're likely local/projected
+    const coords = [];
+    const collect = (c) => {
+      if (typeof c[0] === 'number') { coords.push(c); }
+      else c.forEach(collect);
+    };
+    const features = data.features || (data.type === 'Feature' ? [data] : [{ geometry: data }]);
+    features.forEach(f => {
+      if (f.geometry && f.geometry.coordinates) collect(f.geometry.coordinates);
+    });
+    if (!coords.length) return false;
+    return coords.every(c => Math.abs(c[0]) > 180 || Math.abs(c[1]) > 90);
+  }
+
+  function render() {
+    const raw = document.getElementById('geojson-input').value.trim();
+    const banner = document.getElementById('crs-banner');
+    banner.style.display = 'none';
+    if (!raw) { setStatus('nothing to render', 'err'); return; }
+
+    let data;
+    try { data = JSON.parse(raw); }
+    catch (e) { setStatus('invalid JSON — ' + e.message, 'err'); return; }
+
+    if (geojsonLayer) { map.removeLayer(geojsonLayer); geojsonLayer = null; }
+
+    // CRS check
+    const crsInfo = detectCRS(data);
+    const looksLocal = coordinatesLookLocal(data);
+    localMode = false;
+
+    if (crsInfo.type === 'other') {
+      banner.style.display = 'block';
+      banner.innerHTML = `⚠ Non-standard CRS detected: <b>${crsInfo.name}</b><br>
+        Leaflet only renders WGS84 (EPSG:4326). Shapes may appear misplaced.<br>
+        Switching to local view (basemap hidden).`;
+      localMode = true;
+    } else if (looksLocal) {
+      banner.style.display = 'block';
+      banner.innerHTML = `⚠ Coordinates appear to be in a projected / local system (values outside ±180°/±90°).<br>
+        Basemap hidden — rendering shapes relative to their own extent.`;
+      localMode = true;
+    }
+
+    if (localMode) {
+      map.removeLayer(tileLayer);
+    } else {
+      if (!map.hasLayer(tileLayer)) map.addLayer(tileLayer);
+    }
+
+    try {
+      if (localMode) {
+        // Remap coordinates to lat/lon by normalising to the data's own bounding box
+        const remapped = remapToWGS84(data);
+        geojsonLayer = L.geoJSON(remapped, layerOptions()).addTo(map);
+      } else {
+        geojsonLayer = L.geoJSON(data, layerOptions()).addTo(map);
+      }
+
+      const bounds = geojsonLayer.getBounds();
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
+
+      const count = data.features ? data.features.length : 1;
+      setStatus(`${count} feature${count !== 1 ? 's' : ''} rendered`, 'ok');
+    } catch (e) {
+      setStatus('render error — ' + e.message, 'err');
+    }
+  }
+
+  function layerOptions() {
+    return {
+      style: { color: '#2e7d4f', weight: 2, opacity: 0.9, fillColor: '#52b788', fillOpacity: 0.25 },
+      pointToLayer: (f, latlng) =>
+        L.circleMarker(latlng, { radius: 6, fillColor: '#2e7d4f', color: '#1b4d30', weight: 1.5, fillOpacity: 0.85 }),
+      onEachFeature: (feature, layer) => {
+        if (feature.properties && Object.keys(feature.properties).length) {
+          const props = Object.entries(feature.properties)
+            .map(([k, v]) => `<b>${k}</b>: ${v}`).join('<br>');
+          layer.bindPopup(`<div style="font-family:monospace;font-size:12px">${props}</div>`);
+        }
+      }
+    };
+  }
+
+  function remapToWGS84(data) {
+    // Collect all coordinates to find bounding box
+    const allCoords = [];
+    const collectCoords = (c) => {
+      if (typeof c[0] === 'number') allCoords.push([c[0], c[1]]);
+      else c.forEach(collectCoords);
+    };
+    const features = data.features || [{ geometry: data.geometry || data }];
+    features.forEach(f => { if (f.geometry && f.geometry.coordinates) collectCoords(f.geometry.coordinates); });
+
+    const xs = allCoords.map(c => c[0]);
+    const ys = allCoords.map(c => c[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const rangeX = maxX - minX || 1, rangeY = maxY - minY || 1;
+
+    // Normalise to [-50, 50] lon, [-30, 30] lat (roughly square-ish viewport)
+    const remap = (c) => {
+      if (typeof c[0] === 'number') {
+        return [
+          ((c[0] - minX) / rangeX) * 100 - 50,
+          ((c[1] - minY) / rangeY) * 60 - 30,
+          ...c.slice(2)
+        ];
+      }
+      return c.map(remap);
+    };
+
+    return JSON.parse(JSON.stringify(data, (key, val) => {
+      if (key === 'coordinates') return remap(val);
+      return val;
+    }));
+  }
+
+  function loadFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('geojson-input').value = e.target.result;
+      setStatus('file loaded — ' + file.name);
+      render();
+    };
+    reader.readAsText(file);
+  }
+
+  function clear_() {
+    document.getElementById('geojson-input').value = '';
+    document.getElementById('crs-banner').style.display = 'none';
+    if (geojsonLayer) { map.removeLayer(geojsonLayer); geojsonLayer = null; }
+    if (!map.hasLayer(tileLayer)) map.addLayer(tileLayer);
+    map.setView([20, 0], 2);
+    localMode = false;
+    setStatus('ready');
+  }
+
+  document.getElementById('geojson-input').addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') render();
+  });
+</script>
+</body>
+</html>
