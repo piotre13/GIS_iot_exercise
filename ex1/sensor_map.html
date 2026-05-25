@@ -1,0 +1,55 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>SmartCity Turin — Sensor Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #map { height: 100vh; }
+    .popup { font-size: 13px; line-height: 1.6; }
+    .alert { color: #c0392b; font-weight: bold; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  var map = L.map('map').setView([45.05, 7.67], 12);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO'
+  }).addTo(map);
+
+  var data = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.6869, 45.0703]}, "properties": {"sensor_id": "TRN-001", "location": "Piazza Castello", "temperature_c": 22.4, "humidity_pct": 58, "pm25_ugm3": 12.1, "alert": false}}, {"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.6943, 45.0647]}, "properties": {"sensor_id": "TRN-002", "location": "Piazza Vittorio", "temperature_c": 23.1, "humidity_pct": 61, "pm25_ugm3": 18.4, "alert": false}}, {"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.6332, 44.998]}, "properties": {"sensor_id": "TRN-003", "location": "Mirafiori", "temperature_c": 21.0, "humidity_pct": 70, "pm25_ugm3": 35.2, "alert": true}}, {"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.6757, 45.0333]}, "properties": {"sensor_id": "TRN-004", "location": "Lingotto", "temperature_c": 24.5, "humidity_pct": 52, "pm25_ugm3": 22.7, "alert": true}}, {"type": "Feature", "geometry": {"type": "Point", "coordinates": [7.71, 45.055]}, "properties": {"sensor_id": "TRN-005", "location": "Parco del Po", "temperature_c": 20.8, "humidity_pct": 75, "pm25_ugm3": 8.3, "alert": false}}]};
+
+  L.geoJSON(data, {
+    pointToLayer: function(feature, latlng) {
+      var pm25 = feature.properties.pm25_ugm3;
+      var color = pm25 > 20 ? '#e74c3c' : '#2ecc71';  // red if polluted
+      return L.circleMarker(latlng, {
+        radius: 10,
+        fillColor: color,
+        color: '#fff',
+        weight: 2,
+        fillOpacity: 0.85
+      });
+    },
+    onEachFeature: function(feature, layer) {
+      var p = feature.properties;
+      var alertHtml = p.alert ? '<br><span class="alert">⚠️ HIGH PM2.5</span>' : '';
+      layer.bindPopup(
+        '<div class="popup">'
+        + '<b>' + p.location + '</b> (' + p.sensor_id + ')'
+        + '<br>🌡️ Temp: ' + p.temperature_c + ' °C'
+        + '<br>💧 Humidity: ' + p.humidity_pct + '%'
+        + '<br>🌫️ PM2.5: ' + p.pm25_ugm3 + ' µg/m³'
+        + alertHtml
+        + '</div>'
+      );
+    }
+  }).addTo(map);
+</script>
+</body>
+</html>
